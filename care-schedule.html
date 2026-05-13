@@ -1625,12 +1625,12 @@ function openSyncModal() {
     ind.textContent = SYNC.config.endpoint ? '💾 保存済み' : '（未入力）';
     ind.style.color = SYNC.config.endpoint ? '#2e7d32' : 'var(--g6)';
   }
-  $('#mk-sync').classList.add('show');
+  $('#mk-sync').classList.add('open');
 }
 function closeSyncModal() {
   // 閉じる前に必ず保存
   persistSyncInputs();
-  $('#mk-sync').classList.remove('show');
+  $('#mk-sync').classList.remove('open');
 }
 function saveSyncConfig() {
   const url = ($('#sync-endpoint').value || '').trim();
