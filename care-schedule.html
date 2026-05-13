@@ -269,6 +269,13 @@ html, body { height: 100%; overflow: hidden;
   border-top: 1px solid currentColor; margin-top: 1px; padding-top: 1px;
   opacity: .95;
 }
+.ev-row.ev-limit-badge {
+  display: block; font-size: 9px; font-weight: 700;
+  padding: 1px 4px; margin-top: 2px; border-radius: 3px;
+  text-align: center; white-space: nowrap;
+}
+.ev-row.ev-limit-badge.over    { background: rgba(198,40,40,.18); color: #c62828; }
+.ev-row.ev-limit-badge.partial { background: rgba(245,124,0,.18);  color: #e65100; }
 .ev-time {
   display: block; font-size: 10px; opacity: .75; white-space: nowrap; margin-top: 1px;
 }
@@ -1392,8 +1399,8 @@ function getEventCoverage(events, res) {
 
   for (const ev of sorted) {
     const breakdown = getUnitBreakdown(ev, res);
-    // 処遇改善加算は限度額の枠外 → カバー計算から除外
-    const total = sumLimitUnits(breakdown);
+    // 表示合計と整合させるため sumDisplayUnits を使用（処遇改善加算＋同一建物減算 を除外）
+    const total = sumDisplayUnits(breakdown);
     const remaining = weeklyLimit - accumulated;
 
     if (remaining <= 0) {
@@ -2023,11 +2030,11 @@ function renderDayEvents(events, colEl, res, coverage) {
     const colorKey = ev.serviceType === 'daycare' ? 'daycare' : (ev.category || '身体１');
     const c = COLORS[colorKey] || COLORS['身体１'];
 
-    // 限度額カバー量（処遇改善加算は枠外なので比較対象から除外）
+    // 限度額カバー量（表示合計と同じ基準：処遇改善加算＋同一建物減算 を除外）
     const coveredUnits = coverage ? (coverage.get(ev.id) ?? null) : null;
     const isOverLimit  = coveredUnits !== null && coveredUnits === 0;
-    const evLimitTotal = res ? sumLimitUnits(getUnitBreakdown(ev, res)) : 0;
-    const isPartial    = coveredUnits !== null && coveredUnits > 0 && coveredUnits < evLimitTotal;
+    const evDispTotal  = res ? sumDisplayUnits(getUnitBreakdown(ev, res)) : 0;
+    const isPartial    = coveredUnits !== null && coveredUnits > 0 && coveredUnits < evDispTotal;
 
     const block = document.createElement('div');
     block.className = 'event-block' + (isOverLimit ? ' over-limit' : '');
@@ -2046,12 +2053,8 @@ function renderDayEvents(events, colEl, res, coverage) {
 
     let innerHtml = `<div class="ev-text">`;
 
-    if (isOverLimit) {
-      innerHtml += `<div class="ev-row ev-main"><span class="ev-cat-label">${escHtml(catLabel)}</span></div>`;
-    } else if (isPartial && breakdown.length > 0) {
-      innerHtml += `<div class="ev-row ev-main"><span class="ev-cat-label">${escHtml(catLabel)}</span><span class="ev-unit-num">${coveredUnits}</span></div>`;
-      innerHtml += `<div class="ev-row ev-sub" style="opacity:.7"><span class="ev-cat-label">限度額内</span></div>`;
-    } else if (breakdown.length > 0) {
+    if (breakdown.length > 0) {
+      // 限度額超過・一部超過に関わらず、基本単位＋加算は必ず表示する
       const visibleRows = breakdown.filter(r => !r.hideInDisplay);
       const main = visibleRows[0] || breakdown[0];
       innerHtml += `<div class="ev-row ev-main"><span class="ev-cat-label">${escHtml(main.label)}</span><span class="ev-unit-num">${main.units}</span></div>`;
@@ -2064,7 +2067,14 @@ function renderDayEvents(events, colEl, res, coverage) {
         const total = visibleRows.reduce((s, r) => s + r.units, 0);
         innerHtml += `<div class="ev-row ev-total"><span class="ev-cat-label">計</span><span class="ev-unit-num">${total}</span></div>`;
       }
+      // 限度額の状態をバッジで表示
+      if (isOverLimit) {
+        innerHtml += `<div class="ev-row ev-limit-badge over">⚠ 限度額超過</div>`;
+      } else if (isPartial) {
+        innerHtml += `<div class="ev-row ev-limit-badge partial">⚠ 限度額内: ${coveredUnits}単位のみ</div>`;
+      }
     } else {
+      // breakdown が空の異常系（res未設定など）
       const units = Number(ev.units) || 0;
       innerHtml += `<div class="ev-row ev-main"><span class="ev-cat-label">${escHtml(catLabel)}</span>${units ? `<span class="ev-unit-num">${units}</span>` : ''}</div>`;
     }
