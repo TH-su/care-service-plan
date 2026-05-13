@@ -1257,10 +1257,15 @@ function calcVisitUnits(category, res, startTime) {
   return Math.max(0, units);
 }
 
+// 通所介護の基本単位テーブル参照（careLevel未設定や要支援1/2でも要介護1へフォールバック）
+function getDaycareLevelMap(careLevel) {
+  return DAYCARE_BASE_UNITS[careLevel] || DAYCARE_BASE_UNITS['要介護1'];
+}
+
 function calcDaycareUnits(startTime, endTime, bathing, res) {
-  const careLevel = res.careLevel || '';
-  const levelMap  = DAYCARE_BASE_UNITS[careLevel];
-  const base      = levelMap ? (levelMap[getDaycareTimeKey(startTime, endTime)] || 0) : 0;
+  const careLevel = (res && res.careLevel) || '';
+  const levelMap  = getDaycareLevelMap(careLevel);
+  const base      = levelMap[getDaycareTimeKey(startTime, endTime)] || 0;
   const a = (DB.office && DB.office.daycareAddons) || {};
 
   // ①各種加算（固定単位）
@@ -1325,10 +1330,9 @@ function getUnitBreakdown(ev, res) {
       if (nursingUnits > 0) rows.push({ label: '処遇改善加算', units: nursingUnits, outsideLimit: true });
     }
   } else {
-    // daycare
-    const careLevel = res.careLevel || '';
-    const levelMap = DAYCARE_BASE_UNITS[careLevel];
-    const base = levelMap ? (levelMap[getDaycareTimeKey(ev.startTime, ev.endTime)] || 0) : 0;
+    // daycare（careLevel未設定・要支援は要介護1へフォールバック）
+    const levelMap = getDaycareLevelMap((res && res.careLevel) || '');
+    const base = levelMap[getDaycareTimeKey(ev.startTime, ev.endTime)] || 0;
     rows.push({ label: '通所介護', units: base });
 
     const a = (DB.office && DB.office.daycareAddons) || {};
@@ -1486,8 +1490,22 @@ let DB = { residents: [], currentResidentId: null, office: null };
 function loadDB() {
   try {
     const raw = localStorage.getItem(LS_KEY);
-    if (raw) { const p = JSON.parse(raw); DB = { ...DB, ...p }; }
-  } catch(e) {}
+    if (raw) {
+      const p = JSON.parse(raw);
+      if (p && typeof p === 'object') {
+        DB = { ...DB, ...p };
+      } else {
+        console.warn('loadDB: 不正なデータ形式（オブジェクト以外）。デフォルトを使用します');
+      }
+    }
+  } catch(e) {
+    // パースエラー時もユーザーデータを失わないよう、生データのバックアップを保存
+    console.error('loadDB: localStorage の JSON パースに失敗:', e);
+    try {
+      const raw = localStorage.getItem(LS_KEY);
+      if (raw) localStorage.setItem(LS_KEY + '_backup_' + Date.now(), raw);
+    } catch(_) {}
+  }
   if (!Array.isArray(DB.residents)) DB.residents = [];
   // 事業所情報マイグレーション: 山田太郎の設定をデフォルトとして取り込む
   if (!DB.office) {
@@ -1511,10 +1529,24 @@ function loadDB() {
   recalcAllEventUnits();
 }
 function saveDB() {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(DB)); }
-  catch(e) { showToast('保存エラーが発生しました'); }
+  try {
+    const json = JSON.stringify(DB);
+    localStorage.setItem(LS_KEY, json);
+    // 書込検証：実際に保存されたか確認（クォータ超過などを即検知）
+    const verify = localStorage.getItem(LS_KEY);
+    if (verify !== json) {
+      console.error('saveDB: 書込検証に失敗（localStorage に正しく保存されていません）');
+      showToast('保存に失敗しました。ブラウザのストレージ容量を確認してください');
+      return false;
+    }
+  } catch(e) {
+    console.error('saveDB: 保存エラー:', e);
+    showToast('保存エラーが発生しました: ' + (e && e.message ? e.message : ''));
+    return false;
+  }
   // クラウド自動同期（有効時のみ、debounce）
   if (SYNC.config.endpoint && SYNC.config.auto) SYNC.scheduleAutoPush();
+  return true;
 }
 
 // ── クラウド同期（Google スプレッドシート + Apps Script） ──
@@ -1587,7 +1619,15 @@ const SYNC = {
       if (!json.data) { this.log('ℹ️ クラウドにデータがありません'); this.updateStatusUI('同期'); this._busy = false; return true; }
       const remote = JSON.parse(json.data);
       if (!remote || typeof remote !== 'object') throw new Error('データ形式が不正です');
+      // 事業所情報を保護：remote.office が無い・空オブジェクトの場合は local の DB.office を維持
+      const remoteOfficeValid = remote.office && typeof remote.office === 'object'
+                              && Object.keys(remote.office).length > 0;
+      const preservedOffice = remoteOfficeValid ? null : DB.office;
       DB = { ...DB, ...remote };
+      if (preservedOffice) {
+        DB.office = preservedOffice;
+        this.log('ℹ️ クラウドに事業所情報がないため、ローカル設定を維持しました');
+      }
       if (!Array.isArray(DB.residents)) DB.residents = [];
       saveLocalOnly();
       this.config.lastSync = json.timestamp || Date.now();
