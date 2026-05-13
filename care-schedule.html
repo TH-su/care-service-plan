@@ -389,22 +389,48 @@ select.inp { cursor: pointer; }
 .btn:hover { filter: brightness(0.96); }
 
 /* 予定一覧モーダル */
+.evlist-tabs {
+  display: flex; gap: 4px; background: var(--g1); border-radius: 8px;
+  padding: 4px; margin-bottom: 10px;
+}
+.evlist-tab {
+  flex: 1; padding: 8px 12px; font-size: 13px; font-weight: 600;
+  background: transparent; border: none; border-radius: 6px;
+  cursor: pointer; color: var(--g7); transition: all .15s;
+}
+.evlist-tab:hover { background: var(--g2); }
+.evlist-tab.active { background: var(--g0); color: var(--pri); box-shadow: 0 1px 2px rgba(0,0,0,.1); }
+
 .evlist-day-hd {
   background: var(--g1); padding: 8px 12px; font-size: 13px; font-weight: 700;
   border-bottom: 1px solid var(--g3); position: sticky; top: 0; z-index: 1;
+  color: var(--g8);
 }
-.evlist-day-hd.sat { color: #1565c0; }
-.evlist-day-hd.sun { color: #c62828; }
+.evlist-day-hd.sat   { color: #1565c0; }
+.evlist-day-hd.sun   { color: #c62828; }
+.evlist-day-hd.visit { color: #2e7d32; background: #e8f5e9; }
+.evlist-day-hd.daycare { color: #e65100; background: #fffde7; }
+
+/* 共通: 1行に収めるためのレイアウト */
 .evlist-row {
-  display: grid; grid-template-columns: 90px 110px 1fr;
-  gap: 8px; padding: 8px 12px; border-bottom: 1px solid var(--g2);
-  font-size: 13px; align-items: baseline;
+  display: grid; gap: 10px;
+  padding: 7px 12px; border-bottom: 1px solid var(--g2);
+  font-size: 13px; align-items: center; min-height: 32px;
 }
+.evlist-row.by-day  { grid-template-columns: 105px 170px 1fr; }
+.evlist-row.by-svc  { grid-template-columns: 32px 170px 105px 1fr; }
 .evlist-row:last-child { border-bottom: none; }
 .evlist-row:hover { background: var(--g1); }
-.evlist-time { font-family: monospace; font-weight: 600; color: var(--g8); }
-.evlist-cat  { font-weight: 600; color: var(--g9); }
-.evlist-detail { color: var(--g7); white-space: pre-wrap; word-break: break-word; }
+.evlist-time  { font-family: monospace; font-weight: 600; color: var(--g8); white-space: nowrap; }
+.evlist-cat   { font-weight: 600; color: var(--g9); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.evlist-dow   { font-weight: 700; color: var(--g8); text-align: center; }
+.evlist-dow.sat { color: #1565c0; }
+.evlist-dow.sun { color: #c62828; }
+.evlist-detail {
+  color: var(--g7); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; min-width: 0;
+}
+.evlist-detail.empty { color: var(--g4); font-style: italic; }
 .evlist-empty {
   padding: 30px; text-align: center; color: var(--g6);
 }
@@ -979,13 +1005,17 @@ select.inp { cursor: pointer; }
       <button class="md-close" onclick="closeEventListModal()">✕</button>
     </div>
     <p style="font-size:12px;color:var(--g6);margin-bottom:10px">
-      <span id="event-list-resident">—</span> の予定（曜日順）。テキスト形式で全件コピー可能です。
+      <span id="event-list-resident">—</span> の予定。テキスト形式で全件コピー可能です。
     </p>
+    <div class="evlist-tabs">
+      <button class="evlist-tab active" id="evlist-tab-day" onclick="setEventListView('day')">📅 曜日別</button>
+      <button class="evlist-tab"        id="evlist-tab-svc" onclick="setEventListView('svc')">🏥 サービス種別別（訪問・通所）</button>
+    </div>
     <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:10px">
       <button class="btn btn-pri" onclick="copyEventListText()">📋 全件コピー（テキスト）</button>
       <button class="btn" onclick="copyEventListTSV()">📊 タブ区切り（Excel貼付用）</button>
     </div>
-    <div id="event-list-body" style="border:1px solid var(--g3);border-radius:8px;max-height:60vh;overflow-y:auto"></div>
+    <div id="event-list-body" style="border:1px solid var(--g3);border-radius:8px;max-height:60vh;overflow:auto"></div>
     <textarea id="event-list-textarea" style="position:absolute;left:-9999px;top:-9999px;width:1px;height:1px"></textarea>
   </div>
 </div>
@@ -2568,7 +2598,8 @@ function exportJSON() {
 function printWeek() { window.print(); }
 
 // ── 予定一覧モーダル ──
-// 共通: 表示順にソート（曜日 → 開始時刻）し、人間可読フィールドに整形
+let _evlistView = 'day'; // 'day' = 曜日別 / 'svc' = サービス種別別
+
 function getSortedEvents(res) {
   if (!res || !Array.isArray(res.events)) return [];
   return [...res.events].sort((a, b) =>
@@ -2581,61 +2612,128 @@ function formatEventFields(ev) {
   const category = ev.serviceType === 'daycare' ? '通所介護' : (ev.category || '');
   const time     = `${ev.startTime || ''}〜${ev.endTime || ''}`;
   const detail   = (ev.detail || ev.notes || '').replace(/\r?\n/g, ' ');
-  return { dow, stype, category, time, detail };
+  return { dow, stype, category, time, detail, dayOfWeek: ev.dayOfWeek, serviceType: ev.serviceType };
+}
+
+function setEventListView(mode) {
+  _evlistView = (mode === 'svc') ? 'svc' : 'day';
+  $('#evlist-tab-day').classList.toggle('active', _evlistView === 'day');
+  $('#evlist-tab-svc').classList.toggle('active', _evlistView === 'svc');
+  renderEventListBody();
+}
+
+function renderEventListBody() {
+  const res = currentResident();
+  const body = $('#event-list-body');
+  if (!res) { body.innerHTML = '<div class="evlist-empty">利用者が選択されていません</div>'; return; }
+  const sorted = getSortedEvents(res);
+  if (sorted.length === 0) {
+    body.innerHTML = '<div class="evlist-empty">予定が登録されていません</div>';
+    return;
+  }
+  body.innerHTML = (_evlistView === 'svc')
+    ? renderEventListBySvc(sorted)
+    : renderEventListByDay(sorted);
+}
+
+// 曜日別ビュー: ヘッダ「月曜日」+ 各行「開始〜終了 / サービス種別／区分 / 支援内容」
+function renderEventListByDay(sorted) {
+  const groups = {};
+  for (const ev of sorted) (groups[ev.dayOfWeek] = groups[ev.dayOfWeek] || []).push(ev);
+  let html = '';
+  for (let i = 0; i < 7; i++) {
+    const list = groups[i];
+    if (!list) continue;
+    const cls = i === 5 ? ' sat' : i === 6 ? ' sun' : '';
+    html += `<div class="evlist-day-hd${cls}">${DAYS_JA[i]}曜日（${list.length}件）</div>`;
+    for (const ev of list) {
+      const f = formatEventFields(ev);
+      const label = f.stype === '通所介護' ? f.stype : `${f.stype}／${f.category}`;
+      const detailHtml = f.detail
+        ? `<div class="evlist-detail" title="${escHtml(f.detail)}">${escHtml(f.detail)}</div>`
+        : `<div class="evlist-detail empty">（支援内容なし）</div>`;
+      html +=
+        `<div class="evlist-row by-day">` +
+          `<div class="evlist-time">${escHtml(f.time)}</div>` +
+          `<div class="evlist-cat" title="${escHtml(label)}">${escHtml(label)}</div>` +
+          detailHtml +
+        `</div>`;
+    }
+  }
+  return html;
+}
+
+// サービス種別別ビュー: ヘッダ「訪問介護」「通所介護」+ 各行「曜日 / 区分 / 開始〜終了 / 支援内容」
+function renderEventListBySvc(sorted) {
+  const groups = { visit: [], daycare: [] };
+  for (const ev of sorted) {
+    if (ev.serviceType === 'daycare') groups.daycare.push(ev);
+    else groups.visit.push(ev);
+  }
+  const sections = [
+    { key: 'visit',   label: '訪問介護', cls: 'visit'   },
+    { key: 'daycare', label: '通所介護', cls: 'daycare' },
+  ];
+  let html = '';
+  for (const sec of sections) {
+    const list = groups[sec.key];
+    if (!list.length) continue;
+    html += `<div class="evlist-day-hd ${sec.cls}">${sec.label}（${list.length}件）</div>`;
+    for (const ev of list) {
+      const f = formatEventFields(ev);
+      const category = (sec.key === 'daycare') ? '通所介護' : f.category;
+      const dowCls = f.dayOfWeek === 5 ? ' sat' : f.dayOfWeek === 6 ? ' sun' : '';
+      const detailHtml = f.detail
+        ? `<div class="evlist-detail" title="${escHtml(f.detail)}">${escHtml(f.detail)}</div>`
+        : `<div class="evlist-detail empty">（支援内容なし）</div>`;
+      html +=
+        `<div class="evlist-row by-svc">` +
+          `<div class="evlist-dow${dowCls}">${escHtml(f.dow)}</div>` +
+          `<div class="evlist-cat" title="${escHtml(category)}">${escHtml(category)}</div>` +
+          `<div class="evlist-time">${escHtml(f.time)}</div>` +
+          detailHtml +
+        `</div>`;
+    }
+  }
+  return html;
 }
 
 function openEventListModal() {
   const res = currentResident();
   if (!res) { showToast('利用者が選択されていません'); return; }
   $('#event-list-resident').textContent = res.name || '（無名）';
-
-  const sorted = getSortedEvents(res);
-  const body   = $('#event-list-body');
-
-  if (sorted.length === 0) {
-    body.innerHTML = '<div class="evlist-empty">予定が登録されていません</div>';
-  } else {
-    // 曜日ごとにグルーピング
-    const groups = {};
-    for (const ev of sorted) {
-      const k = ev.dayOfWeek;
-      (groups[k] = groups[k] || []).push(ev);
-    }
-    let html = '';
-    for (let i = 0; i < 7; i++) {
-      const list = groups[i];
-      if (!list) continue;
-      const cls = i === 5 ? ' sat' : i === 6 ? ' sun' : '';
-      html += `<div class="evlist-day-hd${cls}">${DAYS_JA[i]}曜日（${list.length}件）</div>`;
-      for (const ev of list) {
-        const f = formatEventFields(ev);
-        const label = f.stype === '通所介護' ? f.stype : `${f.stype}／${f.category}`;
-        html +=
-          `<div class="evlist-row">` +
-            `<div class="evlist-time">${escHtml(f.time)}</div>` +
-            `<div class="evlist-cat">${escHtml(label)}</div>` +
-            `<div class="evlist-detail">${escHtml(f.detail) || '<span style="color:var(--g4)">（支援内容なし）</span>'}</div>` +
-          `</div>`;
-      }
-    }
-    body.innerHTML = html;
-  }
+  renderEventListBody();
   $('#mk-event-list').classList.add('open');
 }
 function closeEventListModal() {
   $('#mk-event-list').classList.remove('open');
 }
 
-// 順序：実施曜日 サービス種別 サービス区分 開始時刻〜終了時刻 支援内容
+// テキスト/TSV出力（ビュー別に列順を切替）
+// 曜日別:    実施曜日　サービス種別　サービス区分　開始時刻〜終了時刻　支援内容
+// サービス別: 実施曜日　サービス区分　開始時刻〜終了時刻　支援内容
 function buildEventListLines(separator) {
   const res = currentResident();
-  if (!res) return [];
+  if (!res) return { lines: [], header: '' };
+  const sorted = getSortedEvents(res);
   const lines = [];
-  for (const ev of getSortedEvents(res)) {
-    const f = formatEventFields(ev);
-    lines.push([f.dow, f.stype, f.category, f.time, f.detail].join(separator));
+  if (_evlistView === 'svc') {
+    // 訪問→通所の順に並べ替え
+    const visits   = sorted.filter(ev => ev.serviceType !== 'daycare');
+    const daycares = sorted.filter(ev => ev.serviceType === 'daycare');
+    for (const ev of [...visits, ...daycares]) {
+      const f = formatEventFields(ev);
+      const cat = (ev.serviceType === 'daycare') ? '通所介護' : f.category;
+      lines.push([f.dow, cat, f.time, f.detail].join(separator));
+    }
+    return { lines, header: ['実施曜日','サービス区分','開始〜終了','支援内容'].join(separator) };
+  } else {
+    for (const ev of sorted) {
+      const f = formatEventFields(ev);
+      lines.push([f.dow, f.stype, f.category, f.time, f.detail].join(separator));
+    }
+    return { lines, header: ['実施曜日','サービス種別','サービス区分','開始〜終了','支援内容'].join(separator) };
   }
-  return lines;
 }
 
 // クリップボードへの安全コピー（execCommand フォールバック付き）
@@ -2659,10 +2757,10 @@ async function copyToClipboardSafe(text) {
 async function copyEventListText() {
   const res = currentResident();
   if (!res) { showToast('利用者が選択されていません'); return; }
-  const lines = buildEventListLines('　'); // 全角スペース区切り
+  const { lines } = buildEventListLines('　'); // 全角スペース区切り
   if (!lines.length) { showToast('予定がありません'); return; }
-  const header = `${res.name || ''} 週間ケア計画\n`;
-  const text = header + lines.join('\n');
+  const viewLabel = (_evlistView === 'svc') ? 'サービス種別別' : '曜日別';
+  const text = `${res.name || ''} 週間ケア計画（${viewLabel}）\n` + lines.join('\n');
   const ok = await copyToClipboardSafe(text);
   showToast(ok ? `${lines.length}件をコピーしました` : 'コピーに失敗しました');
 }
@@ -2670,9 +2768,8 @@ async function copyEventListText() {
 async function copyEventListTSV() {
   const res = currentResident();
   if (!res) { showToast('利用者が選択されていません'); return; }
-  const lines = buildEventListLines('\t');
+  const { lines, header } = buildEventListLines('\t');
   if (!lines.length) { showToast('予定がありません'); return; }
-  const header = '実施曜日\tサービス種別\tサービス区分\t開始〜終了\t支援内容';
   const text = header + '\n' + lines.join('\n');
   const ok = await copyToClipboardSafe(text);
   showToast(ok ? `${lines.length}件を Excel 貼付用形式でコピーしました` : 'コピーに失敗しました');
